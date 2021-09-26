@@ -1,14 +1,10 @@
-import requests
 import discord
 from discord.ext import commands
-from bs4 import BeautifulSoup
-import re
-from pymongo import MongoClient
-from operator import itemgetter
+from kino_functions import *
 
 # Connect to MongoDB
 client = MongoClient('localhost', 27017)
-db = client['film_database']
+db = client['KinoBotDB']
 
 
 class Kino(commands.Cog):
@@ -103,31 +99,6 @@ class Kino(commands.Cog):
         except AttributeError:
             await ctx.send('Movie does not exist!')
 
-    @commands.command(name='compare',
-                      brief='Compares film stats of two users (Letterboxd)',
-                      description='Compares film stats and displays whether User 1 has watched more/fewer films than User 2',
-                      category='Kino')
-    async def compare(self, ctx, user1=None, user2=None):
-        if user1 is None or user2 is None:
-            await ctx.send('Please enter two valid usernames!')
-            return
-        try:
-            html_text1 = requests.get('https://letterboxd.com/' + str(user1)).text
-            html_text2 = requests.get('https://letterboxd.com/' + str(user2)).text
-            soup1 = BeautifulSoup(html_text1, 'lxml')
-            soup2 = BeautifulSoup(html_text2, 'lxml')
-            pf_stats1 = soup1.find('div', class_='profile-stats js-profile-stats').text
-            pf_stats2 = soup2.find('div', class_='profile-stats js-profile-stats').text
-            filtered_stats1 = re.sub(r'[^0-9]', ' ', pf_stats1).split()
-            filtered_stats2 = re.sub(r'[^0-9]', ' ', pf_stats2).split()
-            if int(filtered_stats1[0]) > int(filtered_stats2[0]):
-                await ctx.send(
-                    f'{user1} has watched {int(filtered_stats1[0]) - int(filtered_stats2[0])} more films than {user2}.')
-            else:
-                await ctx.send(
-                    f'{user1} has watched {int(filtered_stats2[0]) - int(filtered_stats1[0])} fewer films than {user2}.')
-        except AttributeError:
-            await ctx.send('At least one user does not exist!')
 
     @commands.command(name='average')
     async def average(self, ctx, user):
@@ -168,213 +139,16 @@ class Kino(commands.Cog):
 
     @commands.command(name='cache')
     async def cache(self, ctx, user):
-        cursor = db['Films']
-        film_name_urls = []
-        new_entries, progress = 0, 0
-        html_text = requests.get('https://letterboxd.com/' + str(user) + "/films/").text
-        soup = BeautifulSoup(html_text, 'lxml')
-        try:
-            num_pages = soup.find('div', class_='paginate-pages').text.split()[-1:]
-        except AttributeError:
-            num_pages = [1]
+        start = time.perf_counter()
 
-        if int(num_pages[0]) > 1:
-            # Add all films into list film_name_urls (For users with multiple pages of films)
-            for page in range(1, int(num_pages[0]) + 1):
-                new_html = requests.get('https://letterboxd.com/' + str(user) + "/films/page/" + str(page)).text
-                new_soup = BeautifulSoup(new_html, 'lxml')
-                film_name_urls += re.findall(r'data-film-slug="/film/([\w-]+)/"', str(new_soup.find(
-                    'ul', class_='poster-list -p70 -grid film-list clear')))
-            print(f'Pages to be cached: {num_pages[0]}\n'
-                  f'Number of films to be cached: {len(film_name_urls)}')
-            # Loops through each film in film_name_urls
-            for film_url in film_name_urls:
-                # Cache progress updates
-                progress += 1
-                if progress == int(len(film_name_urls) / 4):
-                    await ctx.send(f'...25% complete')
-                elif progress == int(len(film_name_urls) / 2):
-                    await ctx.send(f'...50% complete')
-                elif progress == int(len(film_name_urls) * 0.75):
-                    await ctx.send(f'...75% complete')
-                elif (len(film_name_urls) / progress) == 1:
-                    await ctx.send(f'100% complete!')
-                # Checks whether the film exists in database
-                result = cursor.find_one({"film_url_name": str(film_url)})
-                # If there IS a match in database
-                if result is not None:
-                    # Check whether the user's rating exists in database'
-                    try:
-                        list(map(itemgetter(user), list(result['watched_by'])))
-                        print(f'{user} WAS found in {result["watched_by"]}')
-                        pass
-                    # User has NOT watched the film but it DOES exist in database
-                    except KeyError:
-                        # Request html to grab user film rating
-                        watched_html = requests.get(
-                            'https://letterboxd.com/' + user + '/film/' + film_url + '/activity/').text
-                        watch_soup = BeautifulSoup(watched_html, 'lxml')
-                        conv_user_rating = 0
-                        user_rating = re.findall(r'([★½]+)', str(watch_soup.find_all('span')))
-                        try:
-                            # Convert rating from "★★★★★" format to float
-                            for char in str(user_rating[0]):
-                                if char == "½":
-                                    conv_user_rating += 0.5
-                                else:
-                                    conv_user_rating += 1
-                            watched_by = {user: conv_user_rating}
-                            # If user rating does not exist in database, ADD IT
-                            if list(watched_by)[0] not in list(result["watched_by"]):
-                                cursor.update_one({'film_url_name': film_url}, {'$push': {'watched_by': watched_by}})
-                        except IndexError:
-                            print('Film not rated by user')
-                            pass
-                    print(f'Found db match: {film_url}\n')
-                    pass
-                else:
-                    # Grabbing all necessary info to insert into database as new entry
-                    print(f'No match found for: {film_url}, adding new entry to db...')
-                    film_page_html = requests.get('https://letterboxd.com/film/' + film_url).text
-                    info_soup = BeautifulSoup(film_page_html, 'lxml')
-                    film_name = info_soup.find('h1', class_='headline-1 js-widont prettify').text
-                    film_year = info_soup.find('a', class_='').text
-                    film_director = info_soup.find('span', class_='prettify').text
-                    film_average_score = re.findall(r'"ratingValue":(.+?),', str(info_soup.find_all()))[0]
-                    film_length = info_soup.find('p', class_='text-link text-footer').text.split()[0]
-                    film_cast = re.findall(r'"/actor/([\w-]+)/"',
-                                           str(info_soup.find('div', class_='cast-list text-sluglist')))
-                    banner = info_soup.find('img', class_='image').get("src")
-                    genre_html = requests.get('https://letterboxd.com/film/' + film_url + "/genres/").text
-                    genre_soup = BeautifulSoup(genre_html, 'lxml')
-                    film_genres = genre_soup.find('div', class_='text-sluglist capitalize').text.split()
-                    conv_user_rating = 0
-                    # Request html to grab user film rating
-                    watched_html = requests.get(
-                        'https://letterboxd.com/' + user + '/film/' + film_url + '/activity/').text
-                    watch_soup = BeautifulSoup(watched_html, 'lxml')
-                    user_rating = re.findall(r'([★½]+)', str(watch_soup.find_all('span')))
-                    try:
-                        # Convert rating from "★★★★★" format to float
-                        for char in str(user_rating[0]):
-                            if char == "½":
-                                conv_user_rating += 0.5
-                            else:
-                                conv_user_rating += 1
-                        watched_by = [{user: conv_user_rating}]
-                        cursor.insert_many([{'film_url_name': str(film_url),
-                                             'film_name': str(film_name),
-                                             'banner': banner,
-                                             'year': int(film_year),
-                                             'director': str(film_director),
-                                             'weighted_average': float(film_average_score),
-                                             'length': int(film_length.replace(",", "")),
-                                             'cast': film_cast,
-                                             'genres': film_genres,
-                                             'watched_by': watched_by}])
-                        new_entries += 1
-                    except IndexError:
-                        print('Film not rated by user')
-                        pass
-            await ctx.send(f'{new_entries} new entries cached from {user}!')
-        else:
-            # Add all films into list film_name_urls (For users with ONE page of films)
-            for page in range(num_pages[0]):
-                film_name_urls += re.findall(r'data-film-slug="/film/([\w-]+)/"', str(soup.find(
-                    'ul', class_='poster-list -p70 -grid film-list clear')))
-            print(f'Pages to be cached: {num_pages[0]}\n'
-                  f'Number of films to be cached: {len(film_name_urls)}')
-            # Loops through each film in film_name_urls
-            for film_url in film_name_urls:
-                # Cache progress updates
-                progress += 1
-                if progress == int(len(film_name_urls) / 4):
-                    await ctx.send(f'...25% complete')
-                elif progress == int(len(film_name_urls) / 2):
-                    await ctx.send(f'...50% complete')
-                elif progress == int(len(film_name_urls) * 0.75):
-                    await ctx.send(f'...75% complete')
-                elif (len(film_name_urls) / progress) == 1:
-                    await ctx.send(f'100% complete!')
-                # Checks whether the film exists in database
-                result = cursor.find_one({"film_url_name": str(film_url)})
-                # If there IS a match in database
-                if result is not None:
-                    # Check whether the user has watched the film
-                    try:
-                        list(map(itemgetter(user), list(result['watched_by'])))
-                        print(f'{user} WAS found in {result["watched_by"]}')
-                        pass
-                    # User has NOT watched the film but it DOES exist in database
-                    except KeyError:
-                        # Request html to grab user film rating
-                        watched_html = requests.get(
-                            'https://letterboxd.com/' + user + '/film/' + film_url + '/activity/').text
-                        watch_soup = BeautifulSoup(watched_html, 'lxml')
-                        conv_user_rating = 0
-                        user_rating = re.findall(r'([★½]+)', str(watch_soup.find_all('span')))
-                        try:
-                            # Convert rating from "★★★★★" format to float
-                            for char in str(user_rating[0]):
-                                if char == "½":
-                                    conv_user_rating += 0.5
-                                else:
-                                    conv_user_rating += 1
-                            watched_by = {user: conv_user_rating}
-                            # If user rating does not exist in database, ADD IT
-                            if list(watched_by)[0] not in list(result["watched_by"]):
-                                cursor.update_one({'film_url_name': film_url}, {'$push': {'watched_by': watched_by}})
-                        except IndexError:
-                            print('Film not rated by user')
-                            pass
-                    print(f'Found db match: {film_url}\n')
-                    pass
-                # Film does not exist in database
-                else:
-                    # Grabbing all necessary info to insert into database as new entry
-                    print(f'No match found for: {film_url}, adding new entry to db...')
-                    film_page_html = requests.get('https://letterboxd.com/film/' + film_url).text
-                    info_soup = BeautifulSoup(film_page_html, 'lxml')
-                    film_name = info_soup.find('h1', class_='headline-1 js-widont prettify').text
-                    film_year = info_soup.find('a', class_='').text
-                    film_director = info_soup.find('span', class_='prettify').text
-                    film_average_score = re.findall(r'"ratingValue":(.+?),', str(info_soup.find_all()))[0]
-                    film_length = info_soup.find('p', class_='text-link text-footer').text.split()[0]
-                    film_cast = re.findall(r'"/actor/([\w-]+)/"',
-                                           str(info_soup.find('div', class_='cast-list text-sluglist')))
-                    banner = info_soup.find('img', class_='image').get("src")
-                    genre_html = requests.get('https://letterboxd.com/film/' + film_url + "/genres/").text
-                    genre_soup = BeautifulSoup(genre_html, 'lxml')
-                    film_genres = genre_soup.find('div', class_='text-sluglist capitalize').text.split()
-                    conv_user_rating = 0
-                    # Request html to grab user film rating
-                    watched_html = requests.get(
-                        'https://letterboxd.com/' + user + '/film/' + film_url + '/activity/').text
-                    watch_soup = BeautifulSoup(watched_html, 'lxml')
-                    user_rating = re.findall(r'([★½]+)', str(watch_soup.find_all('span')))
-                    try:
-                        # Convert rating from "★★★★★" format to float
-                        for char in str(user_rating[0]):
-                            if char == "½":
-                                conv_user_rating += 0.5
-                            else:
-                                conv_user_rating += 1
-                        watched_by = [{user: conv_user_rating}]
-                        cursor.insert_many([{'film_url_name': str(film_url),
-                                             'film_name': str(film_name),
-                                             'banner': banner,
-                                             'year': int(film_year),
-                                             'director': str(film_director),
-                                             'weighted_average': float(film_average_score),
-                                             'length': int(film_length.replace(",", "")),
-                                             'cast': film_cast,
-                                             'genres': film_genres,
-                                             'watched_by': watched_by}])
-                        new_entries += 1
-                    except IndexError:
-                        print('Film not rated by user')
-                        pass
-            await ctx.send(f'{new_entries} new entries cached from {user}!')
+        old_urls, new_urls, old_ratings, new_ratings, user_ratings = \
+            CreateUrlsAndRatings(GetPageNum(user), user)
+        new_scraped_info = ScrapeFilmPage(new_urls)
+        MongoDBInserter(new_scraped_info, new_urls, new_ratings)
+        MongoDBChecker(old_urls, old_ratings)
+
+        fin = (time.perf_counter() - start).__round__(2)
+        await ctx.send(f'{len(new_urls)} entries cached from {user.lower()} in {fin}s!')
 
     @commands.command(name='taste')
     async def taste(self, ctx, user):
@@ -417,7 +191,7 @@ class Kino(commands.Cog):
                 except TypeError:
                     await ctx.send(f'{user}\'s films are not cached, please use !cache {user}')
             await ctx.send(
-                f'Average Distance from Letterboxd Rating: {(total_absolute_difference / len(film_name_urls)).__round__(3)}\n'
+                f'Avg Distance from Letterboxd: {(total_absolute_difference / len(film_name_urls)).__round__(3)}\n'
                 f'Critical Index: {(critical_difference / len(film_name_urls)).__round__(3)}')
 
         else:
@@ -444,65 +218,19 @@ class Kino(commands.Cog):
                 except TypeError:
                     await ctx.send(f'{user}\'s films are not cached, please use !cache {user}')
             await ctx.send(
-                f'Average Distance from Letterboxd Rating: {(total_absolute_difference / len(film_name_urls)).__round__(3)}\n'
+                f'Avg Distance from Letterboxd: {(total_absolute_difference / len(film_name_urls)).__round__(3)}\n'
                 f'Critical Index: {(critical_difference / len(film_name_urls)).__round__(3)}')
 
     @commands.command(name='genres')
     async def genres(self, ctx, user):
-        genres = ['action', 'adventure', 'animation', 'comedy', 'crime', 'documentary', 'drama', 'family', 'fantasy',
-                  'history',
-                  'horror', 'music', 'mystery', 'romance', 'science-fiction', 'thriller', 'tv-movie', 'war', 'western']
-        genre_ratings, num_films = [], []
+        start = time.perf_counter()
+        genre_dict, genre_num_dict = GenreCreateUrlsAndRatings(ConvertGenreListToDict(FastGetGenrePageNum(user)), user)
+        fin = (time.perf_counter() - start).__round__(2)
+        print(f'\n{fin}s')
+        kino_embed = discord.Embed(title=f'{user.title()}\'s Genre Ratings')
         for genre in genres:
-            html_text = requests.get(
-                'https://letterboxd.com/' + str(user) + "/films/genre/" + genre + "/by/member-rating/").text
-            soup = BeautifulSoup(html_text, 'lxml')
-
-            try:
-                num_pages = soup.find('div', class_='paginate-pages').text.split()[-1:]
-            except AttributeError:
-                num_pages = [1]
-
-            if int(num_pages[0]) > 1:
-                user_ratings, conv_ratings = [], []
-                for page in range(1, int(num_pages[0]) + 1):
-                    new_html = requests.get(
-                        'https://letterboxd.com/' + str(
-                            user) + "/films/genre/" + genre + "/by/member-rating/page/" + str(page)).text
-                    new_soup = BeautifulSoup(new_html, 'lxml')
-                    user_ratings += re.findall(r'([★½]+)',
-                                               str(new_soup.find('ul',
-                                                                 class_='poster-list -p70 -grid film-list clear')))
-                    for rating in range(len(user_ratings)):
-                        if "½" in user_ratings[rating]:
-                            conv_ratings.append(len(user_ratings[rating]) - 0.5)
-                        else:
-                            conv_ratings.append(len(user_ratings[rating]))
-                if len(conv_ratings) == 0:
-                    genre_ratings.append(0)
-                    num_films.append(0)
-                else:
-                    genre_ratings.append((sum(conv_ratings) / len(conv_ratings)).__round__(2))
-                    num_films.append(re.findall(r'([\d]+)', str(soup.find('h2', class_='ui-block-heading')))[1])
-            else:
-                conv_ratings = []
-                user_ratings = re.findall(r'([★½]+)',
-                                          str(soup.find('ul', class_='poster-list -p70 -grid film-list clear')))
-                for rating in range(len(user_ratings)):
-                    if "½" in user_ratings[rating]:
-                        conv_ratings.append(len(user_ratings[rating]) - 0.5)
-                    else:
-                        conv_ratings.append(len(user_ratings[rating]))
-                if len(conv_ratings) == 0:
-                    genre_ratings.append(0)
-                    num_films.append(0)
-                else:
-                    genre_ratings.append((sum(conv_ratings) / len(conv_ratings)).__round__(2))
-                    num_films.append(re.findall(r'([\d]+)', str(soup.find('h2', class_='ui-block-heading')))[1])
-        kino_embed = discord.Embed(title=f'Average Ratings for each Genre')
-        for rating in range(len(genre_ratings)):
-            kino_embed.add_field(name=f'{genres[rating].title()}',
-                                 value=f'{genre_ratings[rating]} (Total Films: {num_films[rating]})')
+            kino_embed.add_field(name=f'{genre.title()}',
+                                 value=f'{genre_dict.get(genre)} (Total Films: {genre_num_dict.get(genre)})')
         kino_embed.set_footer(text="All information obtained from Letterboxd.com")
         await ctx.send(embed=kino_embed)
 

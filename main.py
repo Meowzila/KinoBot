@@ -1,10 +1,9 @@
+from gevent import monkey
+monkey.patch_socket()
 import os
-import requests
 import discord
 from dotenv import load_dotenv
 from discord.ext import commands
-from bs4 import BeautifulSoup
-import re
 from pymongo import MongoClient
 
 # Set discord bot intents
@@ -22,7 +21,7 @@ for filename in os.listdir('./cogs'):
 
 # Connect to MongoDB
 client = MongoClient('localhost', 27017)
-db = client['film_database']
+db = client['KinoBotDB']
 
 
 @bot.event
