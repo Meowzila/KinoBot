@@ -12,8 +12,6 @@ recent (user) : returns embed of most recently watched film (on letterboxd) for 
 
 fruit (movie) : returns rottentomatoes specific information on a particular movie
 
-compare (user1) (user2) : compares total number of films watched by two users (on letterboxd)
-
 average (user) : calculates average rating of all rated films for user (on letterboxd)
 
 cache (user) : caches all watched films of user to mongodb along with movie information such as name, banner, year, director, cast, average score, genres, etc
