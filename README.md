@@ -10,6 +10,7 @@ films (user) : returns number of films (on letterboxd) a user has watched YTD an
 
 
 recent (user) : returns embed of most recently watched film (on letterboxd) for user containing movie banner and user rating
+
 ![alt text](https://i.imgur.com/kPyWqlI.png)
 
 
@@ -30,6 +31,7 @@ Checks local db for both user entries AND film entries
 taste (user) : calculates two things:
 1. Average user rating distance from letterboxd film rating
 2. Critical index (How much more positively/negatively a user tends to rate their films compared to the average letterboxd film rating)
+3. 
 ![alt text](https://i.imgur.com/k62rgUU.png)
 
 
