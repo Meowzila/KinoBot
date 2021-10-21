@@ -1,7 +1,10 @@
 # KinoBot
 KinoBot is a Discord chat bot written in python with various movie related features
 
-KinoBot uses BeautifulSoup4 to scrape letterboxd.com and rottentomatoes.com for movie-related information and store the info in a local MongoDB database
+KinoBot uses BeautifulSoup4 to scrape letterboxd.com and rottentomatoes.com for movie-related information and stores the info in a local MongoDB database
+
+![alt text](https://i.imgur.com/3tuTPYK.png)
+
 
 Command Output Examples:
 
