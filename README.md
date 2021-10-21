@@ -31,7 +31,7 @@ Checks local db for both user entries AND film entries
 taste (user) : calculates two things:
 1. Average user rating distance from letterboxd film rating
 2. Critical index (How much more positively/negatively a user tends to rate their films compared to the average letterboxd film rating)
-3. 
+
 ![alt text](https://i.imgur.com/k62rgUU.png)
 
 
